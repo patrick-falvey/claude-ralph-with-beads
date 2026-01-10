@@ -1,3 +1,6 @@
+# Beads issue tracking (for Ralph dev - users create their own)
+.beads/
+
 # Ralph generated files
 .call_count
 .last_reset

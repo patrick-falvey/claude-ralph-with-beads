@@ -10,6 +10,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 source "$SCRIPT_DIR/lib/date_utils.sh"
 source "$SCRIPT_DIR/lib/response_analyzer.sh"
 source "$SCRIPT_DIR/lib/circuit_breaker.sh"
+source "$SCRIPT_DIR/lib/beads_integration.sh"
 
 # Configuration
 PROMPT_FILE="PROMPT.md"
@@ -313,24 +314,38 @@ should_exit_gracefully() {
         return 0
     fi
     
-    # 4. Check fix_plan.md for completion
-    if [[ -f "@fix_plan.md" ]]; then
+    # 4. Check task source for completion (beads or @fix_plan.md)
+    local task_source=$(get_task_source)
+    log_status "INFO" "DEBUG: Task source: $task_source" >&2
+
+    if [[ "$task_source" == "beads" ]]; then
+        # Use beads for completion check
+        local ready_count=$(get_ready_task_count)
+        log_status "INFO" "DEBUG: Beads ready tasks: $ready_count" >&2
+
+        if [[ "$ready_count" == "0" ]]; then
+            log_status "WARN" "Exit condition: All beads tasks completed (0 ready tasks)" >&2
+            echo "plan_complete"
+            return 0
+        fi
+    elif [[ "$task_source" == "fix_plan.md" ]]; then
+        # Fallback to @fix_plan.md
         local total_items=$(grep -c "^- \[" "@fix_plan.md" 2>/dev/null)
         local completed_items=$(grep -c "^- \[x\]" "@fix_plan.md" 2>/dev/null)
-        
+
         # Handle case where grep returns no matches (exit code 1)
         [[ -z "$total_items" ]] && total_items=0
         [[ -z "$completed_items" ]] && completed_items=0
-        
+
         log_status "INFO" "DEBUG: @fix_plan.md check - total_items:$total_items, completed_items:$completed_items" >&2
-        
+
         if [[ $total_items -gt 0 ]] && [[ $completed_items -eq $total_items ]]; then
             log_status "WARN" "Exit condition: All fix_plan.md items completed ($completed_items/$total_items)" >&2
             echo "plan_complete"
             return 0
         fi
     else
-        log_status "INFO" "DEBUG: @fix_plan.md file not found" >&2
+        log_status "INFO" "DEBUG: No task source available" >&2
     fi
     
     log_status "INFO" "DEBUG: No exit conditions met, continuing loop" >&2
@@ -427,10 +442,15 @@ build_loop_context() {
     # Add loop number
     context="Loop #${loop_count}. "
 
-    # Extract incomplete tasks from @fix_plan.md
-    if [[ -f "@fix_plan.md" ]]; then
-        local incomplete_tasks=$(grep -c "^- \[ \]" "@fix_plan.md" 2>/dev/null || echo "0")
-        context+="Remaining tasks: ${incomplete_tasks}. "
+    # Add task source and count (beads or @fix_plan.md)
+    local task_source=$(get_task_source)
+    local ready_count=$(get_ready_task_count)
+    context+="Task source: ${task_source}. Remaining tasks: ${ready_count}. "
+
+    # Add current task ID if one is claimed (beads lifecycle)
+    local current_task=$(get_current_task_id)
+    if [[ -n "$current_task" && "$current_task" != "fix_plan" ]]; then
+        context+="Current task: ${current_task}. "
     fi
 
     # Add circuit breaker state
@@ -926,6 +946,16 @@ EOF
 # Cleanup function
 cleanup() {
     log_status "INFO" "Ralph loop interrupted. Cleaning up..."
+
+    # Release any claimed beads task
+    if beads_available; then
+        local current_task=$(get_current_task_id)
+        if [[ -n "$current_task" && "$current_task" != "fix_plan" ]]; then
+            release_task "$current_task" "Interrupted in loop #$loop_count"
+            log_status "WARN" "📋 Released task: $current_task (interrupted)"
+        fi
+    fi
+
     reset_session "manual_interrupt"
     update_status "$loop_count" "$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")" "interrupted" "stopped"
     exit 0
@@ -943,6 +973,14 @@ main() {
     log_status "SUCCESS" "🚀 Ralph loop starting with Claude Code"
     log_status "INFO" "Max calls per hour: $MAX_CALLS_PER_HOUR"
     log_status "INFO" "Logs: $LOG_DIR/ | Docs: $DOCS_DIR/ | Status: $STATUS_FILE"
+
+    # Initialize beads integration and report task source
+    local task_source=$(init_beads_integration)
+    log_status "INFO" "📋 Task source: $task_source"
+    if [[ "$task_source" == "beads" ]]; then
+        local ready_count=$(get_ready_task_count)
+        log_status "INFO" "📋 Ready tasks: $ready_count"
+    fi
     
     # Check if this is a Ralph project directory
     if [[ ! -f "$PROMPT_FILE" ]]; then
@@ -1018,18 +1056,49 @@ main() {
         # Update status
         local calls_made=$(cat "$CALL_COUNT_FILE" 2>/dev/null || echo "0")
         update_status "$loop_count" "$calls_made" "executing" "running"
-        
+
+        # Claim next task if beads is available and no task is currently claimed
+        local claimed_task=""
+        if beads_available; then
+            local current_task=$(get_current_task_id)
+            if [[ -z "$current_task" ]]; then
+                claimed_task=$(claim_next_task "ralph")
+                if [[ -n "$claimed_task" ]]; then
+                    log_status "INFO" "📋 Claimed task: $claimed_task"
+                fi
+            else
+                claimed_task="$current_task"
+                log_status "INFO" "📋 Continuing task: $claimed_task"
+            fi
+        fi
+
         # Execute Claude Code
         execute_claude_code "$loop_count"
         local exec_result=$?
-        
+
         if [ $exec_result -eq 0 ]; then
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "completed" "success"
+
+            # Check if task was completed in this loop (based on response analysis)
+            if [[ -n "$claimed_task" ]] && beads_available; then
+                # Check if response indicates task completion
+                local task_completed=$(jq -r '.analysis.exit_signal // false' .response_analysis 2>/dev/null)
+                local status=$(jq -r '.analysis.status // "unknown"' .response_analysis 2>/dev/null)
+
+                if [[ "$task_completed" == "true" ]] || [[ "$status" == "COMPLETE" ]]; then
+                    log_status "SUCCESS" "✅ Task completed: $claimed_task"
+                    complete_task "$claimed_task" "Completed in loop #$loop_count"
+                fi
+            fi
 
             # Brief pause between successful executions
             sleep 5
         elif [ $exec_result -eq 3 ]; then
-            # Circuit breaker opened
+            # Circuit breaker opened - release any claimed task
+            if [[ -n "$claimed_task" ]] && beads_available; then
+                release_task "$claimed_task" "Circuit breaker trip in loop #$loop_count"
+                log_status "WARN" "📋 Released task: $claimed_task (circuit breaker)"
+            fi
             reset_session "circuit_breaker_trip"
             update_status "$loop_count" "$(cat "$CALL_COUNT_FILE")" "circuit_breaker_open" "halted" "stagnation_detected"
             log_status "ERROR" "🛑 Circuit breaker has opened - halting loop"

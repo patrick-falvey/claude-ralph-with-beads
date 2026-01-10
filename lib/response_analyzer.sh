@@ -112,6 +112,9 @@ parse_json_response() {
     # Loop number: from metadata
     local loop_number=$(jq -r '.metadata.loop_number // .loop_number // 0' "$output_file" 2>/dev/null)
 
+    # Task ID: from flat format or metadata (beads integration)
+    local task_id=$(jq -r '.task_id // .metadata.task_id // ""' "$output_file" 2>/dev/null)
+
     # Confidence: from flat format
     local confidence=$(jq -r '.confidence // 0' "$output_file" 2>/dev/null)
 
@@ -172,6 +175,7 @@ parse_json_response() {
         --arg summary "$summary" \
         --argjson loop_number "$loop_number" \
         --arg session_id "$session_id" \
+        --arg task_id "$task_id" \
         --argjson confidence "$confidence" \
         '{
             status: $status,
@@ -184,10 +188,12 @@ parse_json_response() {
             summary: $summary,
             loop_number: $loop_number,
             session_id: $session_id,
+            task_id: $task_id,
             confidence: $confidence,
             metadata: {
                 loop_number: $loop_number,
-                session_id: $session_id
+                session_id: $session_id,
+                task_id: $task_id
             }
         }' > "$result_file"
 
@@ -234,6 +240,7 @@ analyze_response() {
             files_modified=$(jq -r '.files_modified' .json_parse_result 2>/dev/null || echo "0")
             local json_confidence=$(jq -r '.confidence' .json_parse_result 2>/dev/null || echo "0")
             local session_id=$(jq -r '.session_id' .json_parse_result 2>/dev/null || echo "")
+            local json_task_id=$(jq -r '.task_id' .json_parse_result 2>/dev/null || echo "")
 
             # Persist session ID if present (for session continuity across loop iterations)
             if [[ -n "$session_id" && "$session_id" != "null" ]]; then
@@ -272,6 +279,7 @@ analyze_response() {
                 --argjson exit_signal "$exit_signal" \
                 --arg work_summary "$work_summary" \
                 --argjson output_length "$output_length" \
+                --arg task_id "$json_task_id" \
                 '{
                     loop_number: $loop_number,
                     timestamp: $timestamp,
@@ -286,7 +294,8 @@ analyze_response() {
                         confidence_score: $confidence_score,
                         exit_signal: $exit_signal,
                         work_summary: $work_summary,
-                        output_length: $output_length
+                        output_length: $output_length,
+                        task_id: $task_id
                     }
                 }' > "$analysis_result_file"
             rm -f ".json_parse_result"
@@ -298,10 +307,15 @@ analyze_response() {
     # Text parsing fallback (original logic)
 
     # 1. Check for explicit structured output (if Claude follows schema)
+    # Also extract TASK_ID for beads integration
+    local task_id=""
     if grep -q -- "---RALPH_STATUS---" "$output_file"; then
         # Parse structured output
         local status=$(grep "STATUS:" "$output_file" | cut -d: -f2 | xargs)
         local exit_sig=$(grep "EXIT_SIGNAL:" "$output_file" | cut -d: -f2 | xargs)
+
+        # Extract TASK_ID for beads integration (Level 2)
+        task_id=$(grep "TASK_ID:" "$output_file" | cut -d: -f2 | xargs 2>/dev/null || echo "")
 
         if [[ "$exit_sig" == "true" || "$status" == "COMPLETE" ]]; then
             has_completion_signal=true
@@ -418,6 +432,7 @@ analyze_response() {
         --argjson exit_signal "$exit_signal" \
         --arg work_summary "$work_summary" \
         --argjson output_length "$output_length" \
+        --arg task_id "$task_id" \
         '{
             loop_number: $loop_number,
             timestamp: $timestamp,
@@ -432,7 +447,8 @@ analyze_response() {
                 confidence_score: $confidence_score,
                 exit_signal: $exit_signal,
                 work_summary: $work_summary,
-                output_length: $output_length
+                output_length: $output_length,
+                task_id: $task_id
             }
         }' > "$analysis_result_file"
 

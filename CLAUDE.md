@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the Ralph for Claude Code repository - an autonomous AI development loop system that enables continuous development cycles with intelligent exit detection and rate limiting.
 
-**Version**: v0.9.8 | **Tests**: 276 passing (100% pass rate) | **CI/CD**: GitHub Actions
+**Version**: v0.9.9 | **Tests**: 318 passing (100% pass rate) | **CI/CD**: GitHub Actions
 
 ## Core Architecture
 
@@ -51,6 +51,15 @@ The system uses a modular architecture with reusable components in the `lib/` di
 3. **lib/date_utils.sh** - Cross-platform date utilities
    - ISO timestamp generation for logging
    - Epoch time calculations for rate limiting
+
+4. **lib/beads_integration.sh** - Beads (bd) task management integration
+   - Task source abstraction: beads when available, @fix_plan.md fallback
+   - Detection functions: `beads_available()`, `fix_plan_available()`, `get_task_source()`
+   - Task reading: `get_ready_task_count()`, `get_next_task()`, `all_tasks_complete()`
+   - Task lifecycle: `claim_next_task()`, `complete_task()`, `release_task()`
+   - Context building: `build_task_context()`, `get_task_summary()`
+   - Automatic task claim/release on loop start/end
+   - TASK_ID extraction from RALPH_STATUS for automatic completion
 
 ## Key Commands
 
@@ -107,7 +116,7 @@ tmux attach -t <session-name>
 
 ### Running Tests
 ```bash
-# Run all tests (165 tests)
+# Run all tests (318 tests)
 npm test
 
 # Run specific test suites
@@ -284,10 +293,11 @@ Ralph uses advanced error detection with two-stage filtering to eliminate false 
 
 ## Test Suite
 
-### Test Files (265 tests total)
+### Test Files (318 tests total)
 
 | File | Tests | Description |
 |------|-------|-------------|
+| `test_beads_integration.bats` | 42 | Beads task management integration + lifecycle + TASK_ID extraction |
 | `test_cli_parsing.bats` | 27 | CLI argument parsing for all 12 flags |
 | `test_cli_modern.bats` | 29 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 36 | JSON output format parsing + Claude CLI format + session management |
@@ -313,6 +323,25 @@ bats tests/unit/test_cli_parsing.bats
 ```
 
 ## Recent Improvements
+
+### Beads Task Management Integration (v0.9.9)
+- Added `lib/beads_integration.sh` for structured task management
+  - Task source abstraction: beads when available, @fix_plan.md fallback
+  - Automatic task claiming with `claim_next_task()` at loop start
+  - Automatic task completion with `complete_task()` on success
+  - Task release on circuit breaker trip or manual interrupt
+- Modified `ralph_loop.sh` for beads lifecycle integration
+  - `should_exit_gracefully()` now uses `get_ready_task_count()` abstraction
+  - `build_loop_context()` includes task source and current task ID
+  - Beads initialization logging at startup
+- Extended `lib/response_analyzer.sh` with TASK_ID extraction
+  - Parses TASK_ID from RALPH_STATUS block (text and JSON formats)
+  - Includes task_id in analysis result for lifecycle management
+- Updated `templates/PROMPT.md` with beads instructions
+  - TASK_ID field added to RALPH_STATUS protocol
+  - Instructions for beads vs @fix_plan.md usage
+- Added 42 comprehensive tests for beads integration
+- Test count: 318 (up from 276)
 
 ### Modern CLI for PRD Import (v0.9.8)
 - Modernized `ralph_import.sh` to use Claude Code CLI JSON output format
