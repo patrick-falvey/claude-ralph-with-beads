@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the Ralph for Claude Code repository - an autonomous AI development loop system that enables continuous development cycles with intelligent exit detection and rate limiting.
 
-**Version**: v0.9.9 | **Tests**: 318 passing (100% pass rate) | **CI/CD**: GitHub Actions
+**Version**: v0.9.10 | **Tests**: 333 passing (100% pass rate) | **CI/CD**: GitHub Actions
 
 ## Core Architecture
 
@@ -48,9 +48,13 @@ The system uses a modular architecture with reusable components in the `lib/` di
    - Multi-line error matching for accurate stuck loop detection
    - Confidence scoring for exit decisions
 
-3. **lib/date_utils.sh** - Cross-platform date utilities
+3. **lib/date_utils.sh** - Cross-platform date and process utilities
    - ISO timestamp generation for logging
    - Epoch time calculations for rate limiting
+   - **portable_timeout**: Cross-platform timeout command (macOS/Linux)
+     - Uses gtimeout (Homebrew coreutils), native timeout, or perl fallback
+     - Supports duration formats: `30s`, `5m`, `1h`
+     - Returns exit code 124 on timeout (same as GNU timeout)
 
 4. **lib/beads_integration.sh** - Beads (bd) task management integration
    - Task source abstraction: beads when available, @fix_plan.md fallback
@@ -293,7 +297,7 @@ Ralph uses advanced error detection with two-stage filtering to eliminate false 
 
 ## Test Suite
 
-### Test Files (318 tests total)
+### Test Files (333 tests total)
 
 | File | Tests | Description |
 |------|-------|-------------|
@@ -302,6 +306,7 @@ Ralph uses advanced error detection with two-stage filtering to eliminate false 
 | `test_cli_modern.bats` | 29 | Modern CLI commands (Phase 1.1) + build_claude_command fix |
 | `test_json_parsing.bats` | 36 | JSON output format parsing + Claude CLI format + session management |
 | `test_session_continuity.bats` | 26 | Session lifecycle management + circuit breaker integration |
+| `test_portable_timeout.bats` | 15 | Cross-platform timeout function (macOS/Linux) |
 | `test_exit_detection.bats` | 20 | Exit signal detection |
 | `test_rate_limiting.bats` | 15 | Rate limiting behavior |
 | `test_loop_execution.bats` | 20 | Integration tests |
@@ -323,6 +328,19 @@ bats tests/unit/test_cli_parsing.bats
 ```
 
 ## Recent Improvements
+
+### Cross-Platform Timeout Fix (v0.9.10)
+- Fixed silent failure on macOS where `timeout` command is not available
+- Added `portable_timeout` function to `lib/date_utils.sh`
+  - Checks for `gtimeout` (Homebrew coreutils) first
+  - Falls back to native `timeout` (Linux)
+  - Uses perl-based implementation as last resort (always available on macOS/Linux)
+  - Supports duration formats: `30s`, `5m`, `1h`
+  - Returns exit code 124 on timeout (same as GNU timeout)
+- Updated `ralph_loop.sh` to use `portable_timeout` instead of raw `timeout`
+- Fixed test warning in `test_session_continuity.bats`
+- Added 15 new tests for portable_timeout functionality
+- Test count: 333 (up from 318)
 
 ### Beads Task Management Integration (v0.9.9)
 - Added `lib/beads_integration.sh` for structured task management
