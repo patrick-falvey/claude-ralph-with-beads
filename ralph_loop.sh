@@ -794,11 +794,11 @@ execute_claude_code() {
         log_status "INFO" "Using legacy CLI mode (text output)"
     fi
 
-    # Execute Claude Code
+    # Execute Claude Code (using portable_timeout for cross-platform support)
     if [[ "$use_modern_cli" == "true" ]]; then
         # Modern execution with command array (shell-injection safe)
         # Execute array directly without bash -c to prevent shell metacharacter interpretation
-        if timeout ${timeout_seconds}s "${CLAUDE_CMD_ARGS[@]}" > "$output_file" 2>&1 &
+        if portable_timeout ${timeout_seconds}s "${CLAUDE_CMD_ARGS[@]}" > "$output_file" 2>&1 &
         then
             :  # Continue to wait loop
         else
@@ -811,7 +811,7 @@ execute_claude_code() {
 
     # Fall back to legacy stdin piping if modern mode failed or not enabled
     if [[ "$use_modern_cli" == "false" ]]; then
-        if timeout ${timeout_seconds}s $CLAUDE_CODE_CMD < "$PROMPT_FILE" > "$output_file" 2>&1 &
+        if portable_timeout ${timeout_seconds}s $CLAUDE_CODE_CMD < "$PROMPT_FILE" > "$output_file" 2>&1 &
         then
             :  # Continue to wait loop
         else

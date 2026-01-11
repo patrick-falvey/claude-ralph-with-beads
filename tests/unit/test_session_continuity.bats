@@ -10,6 +10,9 @@ setup() {
     TEST_DIR="$(mktemp -d)"
     cd "$TEST_DIR"
 
+    # Source date_utils for portable_timeout
+    source "${BATS_TEST_DIRNAME}/../../lib/date_utils.sh"
+
     # Initialize git repo
     git init > /dev/null 2>&1
     git config user.email "test@example.com"
@@ -119,7 +122,8 @@ function_exists_in_ralph() {
     echo 'session-to-reset' > "$CLAUDE_SESSION_FILE"
 
     # Run with --reset-session flag (should exit quickly)
-    run timeout 5 bash "${BATS_TEST_DIRNAME}/../../ralph_loop.sh" --reset-session 2>&1
+    # Uses portable_timeout for cross-platform support (macOS lacks timeout command)
+    run portable_timeout 5s bash "${BATS_TEST_DIRNAME}/../../ralph_loop.sh" --reset-session 2>&1
 
     # If flag not recognized, skip
     if [[ "$output" == *"Unknown option"* ]]; then

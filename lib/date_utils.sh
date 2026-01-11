@@ -46,8 +46,72 @@ get_epoch_seconds() {
     date +%s
 }
 
+# Cross-platform timeout command
+# Usage: portable_timeout DURATION COMMAND [ARGS...]
+# Duration format: NUMBER followed by optional suffix (s=seconds, m=minutes, h=hours)
+# Examples: portable_timeout 30s mycommand arg1 arg2
+#          portable_timeout 5m long_running_script
+# Returns: Exit code of command, or 124 if timed out
+portable_timeout() {
+    local duration="$1"
+    shift
+
+    # Try gtimeout first (macOS with Homebrew coreutils)
+    if command -v gtimeout &>/dev/null; then
+        gtimeout "$duration" "$@"
+        return $?
+    fi
+
+    # Try native timeout (Linux, or installed on macOS)
+    if command -v timeout &>/dev/null; then
+        timeout "$duration" "$@"
+        return $?
+    fi
+
+    # Parse duration for perl fallback (convert to seconds)
+    local seconds
+    if [[ "$duration" =~ ^([0-9]+)([smh])?$ ]]; then
+        local num="${BASH_REMATCH[1]}"
+        local unit="${BASH_REMATCH[2]:-s}"
+        case "$unit" in
+            s) seconds=$num ;;
+            m) seconds=$((num * 60)) ;;
+            h) seconds=$((num * 3600)) ;;
+        esac
+    else
+        echo "Error: Invalid duration format: $duration" >&2
+        return 1
+    fi
+
+    # Perl-based fallback (always available on macOS and Linux)
+    # Uses alarm signal for timeout with proper exit code handling
+    perl -e '
+        use POSIX ":sys_wait_h";
+        my $timeout = shift @ARGV;
+        my $pid = fork();
+        die "fork failed: $!" unless defined $pid;
+        if ($pid == 0) {
+            exec @ARGV or die "exec failed: $!";
+        }
+        eval {
+            local $SIG{ALRM} = sub { die "timeout\n" };
+            alarm $timeout;
+            waitpid($pid, 0);
+            alarm 0;
+        };
+        if ($@ eq "timeout\n") {
+            kill "TERM", $pid;
+            sleep 1;
+            kill "KILL", $pid if kill 0, $pid;
+            exit 124;
+        }
+        exit ($? >> 8);
+    ' "$seconds" "$@"
+}
+
 # Export functions for use in other scripts
 export -f get_iso_timestamp
 export -f get_next_hour_time
 export -f get_basic_timestamp
 export -f get_epoch_seconds
+export -f portable_timeout
